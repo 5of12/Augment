@@ -144,6 +144,7 @@ export const buildRecipeGraph = (recipe: RecipeType, params: AudioParams, time: 
     const synth = new Tone.DuoSynth({
       vibratoAmount: params.character * 0.5,
       vibratoRate: 5,
+      volume: -18,
       harmonicity: 1.05,
       voice0: { oscillator: { type: 'sawtooth' }, envelope: { attack: 0.02, decay: decayMs } },
       voice1: { oscillator: { type: 'square' }, envelope: { attack: 0.02, decay: decayMs } }
