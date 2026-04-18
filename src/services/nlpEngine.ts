@@ -1,10 +1,9 @@
 import { RecipeType, AudioParams, Variant } from '../types';
+import { defaultAudioParams, syncBrightnessToCutoff } from '../audioConfig';
 
-const defaultParams: AudioParams = { pitch: 0.5, decay: 0.3, brightness: 0.7, character: 0.2 };
-
-export const generateVariantsFromPrompt = (prompt: string, currentRecipe: RecipeType): Variant[] => {
+export const generateVariantsFromPrompt = (prompt: string, currentRecipe: RecipeType, currentParams: AudioParams): Variant[] => {
   const text = prompt.toLowerCase();
-  let base = { ...defaultParams };
+  let base = { ...defaultAudioParams, ...currentParams };
   let newRecipe = currentRecipe;
 
   if (text.includes('click') || text.includes('tap')) newRecipe = 'click';
@@ -29,9 +28,15 @@ export const generateVariantsFromPrompt = (prompt: string, currentRecipe: Recipe
     base.brightness = 0.4; 
   }
 
+  base = syncBrightnessToCutoff(base);
+
   return [
     { name: "Base Match", recipe: newRecipe, params: { ...base } },
-    { name: "Brighter", recipe: newRecipe, params: { ...base, brightness: Math.min(1, base.brightness + 0.3) } },
+    {
+      name: "Brighter",
+      recipe: newRecipe,
+      params: syncBrightnessToCutoff({ ...base, brightness: Math.min(1, base.brightness + 0.3) })
+    },
     { name: "Snappier", recipe: newRecipe, params: { ...base, decay: Math.max(0, base.decay - 0.2) } },
     { name: "Higher Tone", recipe: newRecipe, params: { ...base, pitch: Math.min(1, base.pitch + 0.3) } }
   ];

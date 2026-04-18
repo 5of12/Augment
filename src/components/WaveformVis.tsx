@@ -41,5 +41,13 @@ export const WaveformVis: React.FC = () => {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  return <canvas ref={canvasRef} width="800" height="300" className="w-full h-full object-cover opacity-90" />;
+  return (
+    <canvas
+      id="waveform-canvas"
+      ref={canvasRef}
+      width="800"
+      height="300"
+      className="waveform-canvas h-full w-full object-cover opacity-90"
+    />
+  );
 };

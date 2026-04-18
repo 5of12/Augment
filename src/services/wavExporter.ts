@@ -1,5 +1,5 @@
 import * as Tone from 'tone';
-import { buildRecipeGraph } from './audioEngine';
+import { buildRecipeGraph, getRenderDuration } from './audioEngine';
 import { RecipeType, AudioParams } from '../types';
 
 export const audioBufferToWav = (buffer: AudioBuffer) => {
@@ -43,7 +43,7 @@ export const audioBufferToWav = (buffer: AudioBuffer) => {
 export const exportWav = async (recipe: RecipeType, params: AudioParams) => {
   const buffer = await Tone.Offline(() => {
     buildRecipeGraph(recipe, params, 0, true);
-  }, 1.0);
+  }, getRenderDuration(recipe, params));
   
   const wavBlob = audioBufferToWav(buffer.get());
   const url = URL.createObjectURL(wavBlob);
