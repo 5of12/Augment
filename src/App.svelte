@@ -2,9 +2,14 @@
   import { onMount, onDestroy } from 'svelte';
   import * as Tone from 'tone';
   import { Wand2, Activity, Keyboard } from 'lucide-svelte';
-  import { slide, fade } from 'svelte/transition';
+  import { slide } from 'svelte/transition';
   import type { AudioParams, RecipeType, Variant } from './types';
-  import { defaultAudioParams, syncBrightnessToCutoff } from './audioConfig';
+  import {
+    defaultAudioParams,
+    getAvailableSampleNotes,
+    getResolvedSampleRootNote,
+    syncBrightnessToCutoff
+  } from './audioConfig';
   import {
     getEngineTypeForRecipe,
     getResolvedEngine,
@@ -27,7 +32,8 @@
   import AdvancedSynthParametersPanel from './components/AdvancedControls/AdvancedSynthParametersPanel.svelte';
   import MusicalTypingKeyboard from './components/MusicalTypingKeyboard.svelte';
   import ToggleSwitch from './components/ToggleSwitch.svelte';
-  import { MUSICAL_TYPING_KEYMAP, MUSICAL_TYPING_NOTES } from './musicalTyping';
+  import { MUSICAL_TYPING_KEYMAP } from './musicalTyping';
+  import { inferSampleNoteFromFilename, sortSampleNotes } from './sampleUtils';
 
   let recipe = $state<RecipeType>('bloop');
   let params = $state<AudioParams>({ ...defaultAudioParams });
@@ -48,10 +54,19 @@
   const midiSupported = typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
 
   let activePerformanceSources = new Map<number, Set<string>>();
-  let midiAccess: MIDIAccess | null = null;
   let checkStateInterval: number;
 
-  const resolvedEngine = $derived(getResolvedEngine(params.engine as any, recipe as any));
+  const resolvedEngine = $derived(getResolvedEngine(recipe as any, params.engine as any));
+  const advancedSelectedEngine = $derived(params.engine === 'auto' ? resolvedEngine : params.engine);
+  const availableSampleNotes = $derived(getAvailableSampleNotes(params));
+
+  const revokeUploadedSampleUrls = (urls: Record<string, string>) => {
+    for (const url of Object.values(urls)) {
+      if (url.startsWith('blob:')) {
+        URL.revokeObjectURL(url);
+      }
+    }
+  };
 
   $effect(() => {
     if (typeof window !== 'undefined') {
@@ -64,14 +79,25 @@
 
   const getModeScopedParams = () => {
     if (isAdvancedMode) return params;
-    return { ...params, engine: 'auto' as const };
+    return syncBrightnessToCutoff({ ...params, engine: 'auto' as const });
   };
 
   $effect(() => {
     updateActiveParams(getModeScopedParams());
     if (isAdvancedMode) {
-      updatePerformanceInstrument(recipe, getModeScopedParams());
+      void updatePerformanceInstrument(recipe, getModeScopedParams());
     }
+  });
+
+  $effect(() => {
+    const resolvedRootNote = getResolvedSampleRootNote(params);
+    if (params.sampleRootNote !== resolvedRootNote) {
+      params = { ...params, sampleRootNote: resolvedRootNote };
+    }
+  });
+
+  onDestroy(() => {
+    revokeUploadedSampleUrls(params.uploadedSampleUrls);
   });
 
   onMount(() => {
@@ -211,7 +237,6 @@
     try {
       midiError = null;
       const access = await navigator.requestMIDIAccess();
-      midiAccess = access;
       isMidiEnabled = true;
 
       refreshMidiInputs(access);
@@ -241,7 +266,7 @@
     p.decay = Math.random();
     p.brightness = Math.random();
     p.character = Math.random();
-    params = p;
+    params = isAdvancedMode ? p : syncBrightnessToCutoff(p);
   };
 
   const handleRecipeSelect = async (r: RecipeType) => {
@@ -254,7 +279,7 @@
   const handleParamChange = <K extends keyof AudioParams>(key: K, val: AudioParams[K]) => {
     const p = { ...params };
     p[key] = val;
-    if (key === 'brightness' || !isAdvancedMode) {
+    if (!isAdvancedMode && key === 'brightness') {
       const finalParams = syncBrightnessToCutoff(p);
       params = finalParams;
     } else {
@@ -262,11 +287,48 @@
     }
   };
 
+  const handleSampleUpload = (files: FileList | null) => {
+    if (!files?.length) return;
+
+    const nextUrls: Record<string, string> = {};
+    Array.from(files).forEach((file, index) => {
+      const note = inferSampleNoteFromFilename(file.name, index);
+      nextUrls[note] = URL.createObjectURL(file);
+    });
+
+    const nextNotes = sortSampleNotes(Object.keys(nextUrls));
+    const nextRootNote = nextNotes.includes(params.sampleRootNote) ? params.sampleRootNote : nextNotes[0] ?? 'C4';
+
+    revokeUploadedSampleUrls(params.uploadedSampleUrls);
+    params = {
+      ...params,
+      sampleSource: 'upload',
+      uploadedSampleUrls: nextUrls,
+      uploadedSampleLabel: files.length === 1 ? files[0].name : `${files.length} samples`,
+      sampleRootNote: nextRootNote
+    };
+  };
+
+  const clearUploadedSamples = () => {
+    revokeUploadedSampleUrls(params.uploadedSampleUrls);
+    const nextParams = {
+      ...params,
+      sampleSource: 'stock' as const,
+      uploadedSampleUrls: {},
+      uploadedSampleLabel: '',
+      sampleRootNote: defaultAudioParams.sampleRootNote
+    };
+    params = {
+      ...nextParams,
+      sampleRootNote: getResolvedSampleRootNote(nextParams)
+    };
+  };
+
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
     isGenerating = true;
     try {
-      const results = await generateVariantsFromPrompt(prompt, recipe as any, params);
+      const results = await generateVariantsFromPrompt(prompt, recipe as any, getModeScopedParams());
       variants = results;
     } catch (e) {
       console.error(e);
@@ -277,10 +339,11 @@
 
   const handleApplyVariant = async (v: Variant) => {
     recipe = v.recipe;
-    params = v.params;
+    params = isAdvancedMode ? v.params : syncBrightnessToCutoff(v.params);
     await Tone.start();
     isAudioStarted = true;
-    await playSound(recipe as any, getModeScopedParams());
+    const nextParams = isAdvancedMode ? v.params : syncBrightnessToCutoff({ ...v.params, engine: 'auto' });
+    await playSound(v.recipe as any, nextParams);
   };
 
   const getRecipeLabel = (r: RecipeType) => {
@@ -319,6 +382,7 @@
           {params}
           onChange={handleParamChange}
           {resolvedEngine}
+          selectedEngine={advancedSelectedEngine}
           recipeLabel={getRecipeLabel(recipe)}
         />
 
@@ -352,6 +416,9 @@
           {params}
           onChange={handleParamChange}
           {resolvedEngine}
+          {availableSampleNotes}
+          onSampleUpload={handleSampleUpload}
+          onClearUploadedSamples={clearUploadedSamples}
         />
       </div>
     {:else}

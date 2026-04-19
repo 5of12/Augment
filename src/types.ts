@@ -1,5 +1,19 @@
 export type RecipeType = 'tap' | 'click' | 'bloop' | 'chirp' | 'success' | 'error';
-export type SynthEngine = 'auto' | 'synth' | 'fm' | 'am' | 'membrane' | 'metal' | 'duo' | 'polyfm';
+export type SampleSource = 'stock' | 'upload';
+export type SynthEngine =
+  | 'auto'
+  | 'synth'
+  | 'mono'
+  | 'fm'
+  | 'am'
+  | 'poly'
+  | 'fat'
+  | 'metal'
+  | 'grain'
+  | 'sampler'
+  | 'membrane'
+  | 'duo'
+  | 'polyfm';
 export type ResolvedSynthEngine = Exclude<SynthEngine, 'auto'>;
 export type SynthOscillatorType =
   | 'sine'
@@ -7,6 +21,7 @@ export type SynthOscillatorType =
   | 'square'
   | 'sawtooth'
   | 'fatsine'
+  | 'fatsquare'
   | 'fattriangle'
   | 'fatsawtooth'
   | 'pulse';
@@ -28,6 +43,10 @@ export interface AudioParams {
   envelopeDecay: number;
   sustain: number;
   release: number;
+  sampleSource: SampleSource;
+  sampleRootNote: string;
+  uploadedSampleUrls: Record<string, string>;
+  uploadedSampleLabel: string;
 }
 
 export interface Variant {

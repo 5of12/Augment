@@ -6,15 +6,26 @@
     filterOptions,
     formatFrequency,
     oscillatorOptions,
+    toFatSpreadCents,
+    toFatVoiceCount,
     toFilterCutoffFrequency,
-    toFilterQ
+    toFilterQ,
+    toGrainOverlapSeconds,
+    toGrainSizeSeconds,
+    toMonoFilterEnvelopeRange,
+    toPolyDetuneCents,
+    toPolyVoiceCount,
+    toPortamentoSeconds
   } from '../../audioConfig';
   import Knob from '../Knob.svelte';
 
-  let { params, onChange, resolvedEngine } = $props<{
+  let { params, onChange, resolvedEngine, availableSampleNotes, onSampleUpload, onClearUploadedSamples } = $props<{
     params: AudioParams;
     onChange: <K extends keyof AudioParams>(key: K, value: AudioParams[K]) => void;
     resolvedEngine: ResolvedSynthEngine;
+    availableSampleNotes: string[];
+    onSampleUpload: (files: FileList | null) => void;
+    onClearUploadedSamples: () => void;
   }>();
 
   type AdvancedKnobParamKey = 'pitch' | 'decay' | 'brightness' | 'character' | 'filterCutoff' | 'filterQ';
@@ -46,6 +57,24 @@
     ];
 
     switch (engine) {
+      case 'mono':
+        return [
+          ...commonControls,
+          {
+            key: 'brightness',
+            label: 'Filter Env',
+            ariaLabel: 'Mono synth filter envelope range',
+            defaultValue: 0.7,
+            displayValue: (params) => `${toMonoFilterEnvelopeRange(params.brightness).toFixed(1)} oct`
+          },
+          {
+            key: 'character',
+            label: 'Glide',
+            ariaLabel: 'Mono synth portamento',
+            defaultValue: 0.2,
+            displayValue: (params) => `${toPortamentoSeconds(params.character).toFixed(2)}s`
+          }
+        ];
       case 'fm':
       case 'polyfm':
         return [
@@ -73,7 +102,50 @@
             label: 'Harmonicity',
             ariaLabel: 'AM harmonicity ratio',
             defaultValue: 0.5,
-            displayValue: (params) => `${(0.5 + params.brightness * 3.5).toFixed(2)}x`
+            displayValue: (params) => `${(0.5 + params.brightness * 4.5).toFixed(2)}x`
+          },
+          {
+            key: 'character',
+            label: 'Depth',
+            ariaLabel: 'AM modulation depth',
+            defaultValue: 0.2,
+            displayValue: (params) => `${Math.round((0.25 + params.character * 0.75) * 100)}%`
+          }
+        ];
+      case 'poly':
+        return [
+          ...commonControls,
+          {
+            key: 'brightness',
+            label: 'Detune',
+            ariaLabel: 'Poly synth detune amount',
+            defaultValue: 0.2,
+            displayValue: (params) => `${Math.round(toPolyDetuneCents(params.brightness))} ct`
+          },
+          {
+            key: 'character',
+            label: 'Voices',
+            ariaLabel: 'Poly synth voice count',
+            defaultValue: 0.4,
+            displayValue: (params) => `${toPolyVoiceCount(params.character)}`
+          }
+        ];
+      case 'fat':
+        return [
+          ...commonControls,
+          {
+            key: 'brightness',
+            label: 'Spread',
+            ariaLabel: 'Fat oscillator spread',
+            defaultValue: 0.35,
+            displayValue: (params) => `${Math.round(toFatSpreadCents(params.brightness))} ct`
+          },
+          {
+            key: 'character',
+            label: 'Voices',
+            ariaLabel: 'Fat oscillator voice count',
+            defaultValue: 0.3,
+            displayValue: (params) => `${toFatVoiceCount(params.character)}`
           }
         ];
       case 'metal':
@@ -81,17 +153,17 @@
           ...commonControls,
           {
             key: 'brightness',
-            label: 'Harmonics',
-            ariaLabel: 'Metal harmonics',
+            label: 'Harmonicity',
+            ariaLabel: 'Metal synth harmonicity',
             defaultValue: 0.6,
-            displayValue: (params) => `${(1 + params.brightness * 20).toFixed(1)} Hz`
+            displayValue: (params) => `${(1 + params.brightness * 7).toFixed(2)}x`
           },
           {
             key: 'character',
             label: 'Mod Idx',
             ariaLabel: 'Metal modulation index',
             defaultValue: 0.3,
-            displayValue: (params) => `${(params.character * 100).toFixed(0)}`
+            displayValue: (params) => `${(8 + params.character * 60).toFixed(0)}`
           }
         ];
       case 'membrane':
@@ -99,10 +171,17 @@
           ...commonControls,
           {
             key: 'brightness',
+            label: 'Pitch Decay',
+            ariaLabel: 'Membrane pitch decay',
+            defaultValue: 0.4,
+            displayValue: (params) => `${(0.01 + params.brightness * 0.2).toFixed(2)}s`
+          },
+          {
+            key: 'character',
             label: 'Octaves',
             ariaLabel: 'Membrane octaves',
             defaultValue: 0.4,
-            displayValue: (params) => `${(params.brightness * 8).toFixed(1)}`
+            displayValue: (params) => `${(1 + params.character * 8).toFixed(1)}`
           }
         ];
       case 'duo':
@@ -123,6 +202,26 @@
             displayValue: (params) => `${(params.character * 0.5).toFixed(2)} amt`
           }
         ];
+      case 'grain':
+        return [
+          ...commonControls,
+          {
+            key: 'brightness',
+            label: 'Grain Size',
+            ariaLabel: 'Grain size',
+            defaultValue: 0.35,
+            displayValue: (params) => `${toGrainSizeSeconds(params.brightness).toFixed(2)}s`
+          },
+          {
+            key: 'character',
+            label: 'Overlap',
+            ariaLabel: 'Grain overlap',
+            defaultValue: 0.2,
+            displayValue: (params) => `${toGrainOverlapSeconds(params.character).toFixed(2)}s`
+          }
+        ];
+      case 'sampler':
+        return commonControls;
       case 'synth':
       default:
         return commonControls;
@@ -133,6 +232,8 @@
   let synthSpecificDefinitions = $derived(parameterDefinitions.filter(
     (definition) => definition.key !== 'filterCutoff' && definition.key !== 'filterQ'
   ));
+  let fileInputElement = $state<HTMLInputElement | null>(null);
+  let usesSampleSource = $derived(resolvedEngine === 'sampler' || resolvedEngine === 'grain');
   let supportsSecondaryVoice = $derived(
     resolvedEngine === 'fm' || resolvedEngine === 'am' || resolvedEngine === 'polyfm' || resolvedEngine === 'duo'
   );
@@ -141,9 +242,17 @@
       ? 'Voice A'
       : resolvedEngine === 'fm' || resolvedEngine === 'am' || resolvedEngine === 'polyfm'
         ? 'Carrier'
+        : resolvedEngine === 'fat'
+          ? 'Shape'
         : 'Oscillator'
   );
   let modulatorLabel = $derived(resolvedEngine === 'duo' ? 'Voice B' : 'Modulator');
+  let samplePanelTitle = $derived(resolvedEngine === 'grain' ? 'Source' : 'Sample');
+  let sampleStatusLabel = $derived(
+    params.sampleSource === 'upload' && Object.keys(params.uploadedSampleUrls).length > 0
+      ? params.uploadedSampleLabel || `${availableSampleNotes.length} samples`
+      : 'Stock Piano'
+  );
 </script>
 
 <aside
@@ -164,30 +273,88 @@
     id="voice-control-panel"
     class="voice-control-panel rounded-[1.25rem] border border-[#dfdfdd] bg-white p-3"
   >
-    <div class="mb-3 text-[10px] font-bold uppercase tracking-[0.22em] text-[#8c8a84]">Voice</div>
-    <div class="space-y-3">
-      <label id="oscillator-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
-        <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">{oscillatorLabel}</span>
-        <select
-          id="oscillator-select"
-          aria-label={oscillatorLabel}
-          value={params.oscillatorType}
-          onchange={(e) => onChange('oscillatorType', (e.target as HTMLSelectElement).value as SynthOscillatorType)}
-          class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
-        >
-          {#each oscillatorOptions as option}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </label>
-      {#if supportsSecondaryVoice}
-        <label id="modulator-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
-          <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">{modulatorLabel}</span>
+    <div class="mb-3 text-[10px] font-bold uppercase tracking-[0.22em] text-[#8c8a84]">
+      {usesSampleSource ? samplePanelTitle : 'Voice'}
+    </div>
+    {#if usesSampleSource}
+      <div class="space-y-3">
+        <label id="sample-source-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
+          <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Source</span>
           <select
-            id="modulator-select"
-            aria-label={modulatorLabel}
-            value={params.modulationType}
-            onchange={(e) => onChange('modulationType', (e.target as HTMLSelectElement).value as SynthOscillatorType)}
+            id="sample-source-select"
+            aria-label="Sample source"
+            value={params.sampleSource}
+            onchange={(e) => onChange('sampleSource', (e.target as HTMLSelectElement).value as AudioParams['sampleSource'])}
+            class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
+          >
+            <option value="stock">Stock Piano</option>
+            <option value="upload">Uploaded Samples</option>
+          </select>
+        </label>
+
+        <label id="sample-root-note-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
+          <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Root Note</span>
+          <select
+            id="sample-root-note-select"
+            aria-label="Sample root note"
+            value={params.sampleRootNote}
+            onchange={(e) => onChange('sampleRootNote', (e.target as HTMLSelectElement).value)}
+            class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
+          >
+            {#each availableSampleNotes as note}
+              <option value={note}>{note}</option>
+            {/each}
+          </select>
+        </label>
+
+        <div id="sample-upload-panel" class="sample-upload-panel rounded-xl border border-[#d7d6d0] bg-[#faf9f5] p-2.5">
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <span class="text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Library</span>
+            <span class="truncate text-[11px] font-medium text-[#5e5b55]">{sampleStatusLabel}</span>
+          </div>
+          <div class="flex gap-2">
+            <input
+              id="sample-upload-input"
+              bind:this={fileInputElement}
+              type="file"
+              accept="audio/*"
+              multiple
+              class="hidden"
+              onchange={(e) => {
+                onSampleUpload((e.target as HTMLInputElement).files);
+                (e.target as HTMLInputElement).value = '';
+              }}
+            />
+            <button
+              id="sample-upload-button"
+              type="button"
+              onclick={() => fileInputElement?.click()}
+              class="flex-1 rounded-lg border border-[#d7d6d0] bg-white px-3 py-2 text-[12px] font-medium text-[#111] transition-colors hover:border-[#ff4a00] hover:text-[#ff4a00]"
+            >
+              Upload
+            </button>
+            {#if Object.keys(params.uploadedSampleUrls).length > 0}
+              <button
+                id="clear-sample-upload-button"
+                type="button"
+                onclick={onClearUploadedSamples}
+                class="rounded-lg border border-[#d7d6d0] bg-white px-3 py-2 text-[12px] font-medium text-[#5e5b55] transition-colors hover:border-[#111] hover:text-[#111]"
+              >
+                Clear
+              </button>
+            {/if}
+          </div>
+        </div>
+      </div>
+    {:else}
+      <div class="space-y-3">
+        <label id="oscillator-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
+          <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">{oscillatorLabel}</span>
+          <select
+            id="oscillator-select"
+            aria-label={oscillatorLabel}
+            value={params.oscillatorType}
+            onchange={(e) => onChange('oscillatorType', (e.target as HTMLSelectElement).value as SynthOscillatorType)}
             class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
           >
             {#each oscillatorOptions as option}
@@ -195,8 +362,24 @@
             {/each}
           </select>
         </label>
-      {/if}
-    </div>
+        {#if supportsSecondaryVoice}
+          <label id="modulator-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
+            <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">{modulatorLabel}</span>
+            <select
+              id="modulator-select"
+              aria-label={modulatorLabel}
+              value={params.modulationType}
+              onchange={(e) => onChange('modulationType', (e.target as HTMLSelectElement).value as SynthOscillatorType)}
+              class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
+            >
+              {#each oscillatorOptions as option}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+      </div>
+    {/if}
   </section>
 
   <section

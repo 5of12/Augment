@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { Layers2 } from 'lucide-svelte';
   import type { AudioParams, ResolvedSynthEngine } from '../../types';
-  import { engineLabels, engineOptions, formatFrequency, toPitchFrequency, formatSeconds, toTriggerLengthSeconds } from '../../audioConfig';
+  import { engineOptions, formatFrequency, toPitchFrequency, formatSeconds, toTriggerLengthSeconds } from '../../audioConfig';
   import Knob from '../Knob.svelte';
 
-  let { params, onChange, resolvedEngine, recipeLabel } = $props<{
+  let { params, onChange, resolvedEngine, selectedEngine, recipeLabel } = $props<{
     params: AudioParams;
     onChange: <K extends keyof AudioParams>(key: K, value: AudioParams[K]) => void;
     resolvedEngine: ResolvedSynthEngine;
+    selectedEngine: AudioParams['engine'];
     recipeLabel: string;
   }>();
 </script>
@@ -31,11 +31,10 @@
     <select
       id="engine-select-input"
       aria-label="Synthesis algorithm"
-      value={params.engine}
+      value={selectedEngine}
       onchange={(e) => onChange('engine', (e.target as HTMLSelectElement).value as any)}
       class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-2 text-[13px] font-medium text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
     >
-      <option value="auto">Auto ({engineLabels[resolvedEngine as keyof typeof engineLabels]})</option>
       {#each engineOptions as option}
         <option value={option.value}>{option.label}</option>
       {/each}

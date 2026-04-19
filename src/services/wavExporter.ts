@@ -41,8 +41,8 @@ export const audioBufferToWav = (buffer: AudioBuffer) => {
 };
 
 export const exportWav = async (recipe: RecipeType, params: AudioParams) => {
-  const buffer = await Tone.Offline(() => {
-    buildRecipeGraph(recipe, params, 0, true);
+  const buffer = await Tone.Offline(async () => {
+    await buildRecipeGraph(recipe, params, 0, true);
   }, getRenderDuration(recipe, params));
   
   const audioBuffer = buffer.get();

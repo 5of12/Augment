@@ -157,6 +157,8 @@
         <g
           id={`adsr-handle-${handle}`}
           class="adsr-handle cursor-pointer"
+          role="button"
+          tabindex="0"
           aria-label={`${label} envelope handle`}
           onpointerdown={(event) => {
             const svgPoint = toSvgPoint(event.clientX, event.clientY);
