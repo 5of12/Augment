@@ -1,11 +1,11 @@
-import React, { useEffect, useRef } from 'react';
-import { globalAnalyser } from '../services/audioEngine';
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { globalAnalyser } from '../services/audioEngine';
 
-export const WaveformVis: React.FC = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  let canvasRef: HTMLCanvasElement;
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
+  onMount(() => {
+    const canvas = canvasRef;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -39,15 +39,13 @@ export const WaveformVis: React.FC = () => {
     };
     draw();
     return () => cancelAnimationFrame(raf);
-  }, []);
+  });
+</script>
 
-  return (
-    <canvas
-      id="waveform-canvas"
-      ref={canvasRef}
-      width="800"
-      height="300"
-      className="waveform-canvas h-full w-full object-cover opacity-90"
-    />
-  );
-};
+<canvas
+  id="waveform-canvas"
+  bind:this={canvasRef}
+  width="800"
+  height="300"
+  class="waveform-canvas h-full w-full object-cover opacity-90"
+></canvas>

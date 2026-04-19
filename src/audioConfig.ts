@@ -1,4 +1,4 @@
-import { AudioParams, BasicParamKey, FilterType, ResolvedSynthEngine, SynthEngine, SynthOscillatorType } from './types';
+import type { AudioParams, BasicParamKey, FilterType, ResolvedSynthEngine, SynthEngine, SynthOscillatorType } from './types';
 
 export const defaultAudioParams: AudioParams = {
   pitch: 0.5,

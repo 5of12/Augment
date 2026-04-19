@@ -1,4 +1,4 @@
-import { RecipeType, AudioParams, Variant } from '../types';
+import type { RecipeType, AudioParams, Variant } from '../types';
 import { defaultAudioParams, syncBrightnessToCutoff } from '../audioConfig';
 
 export const generateVariantsFromPrompt = (prompt: string, currentRecipe: RecipeType, currentParams: AudioParams): Variant[] => {

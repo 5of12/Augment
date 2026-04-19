@@ -34,4 +34,5 @@ export interface Variant {
   name: string;
   recipe: RecipeType;
   params: AudioParams;
+  description?: string;
 }

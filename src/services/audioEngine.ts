@@ -1,5 +1,5 @@
 import * as Tone from 'tone';
-import { AudioParams, RecipeType, ResolvedSynthEngine, SynthEngine } from '../types';
+import type { AudioParams, RecipeType, ResolvedSynthEngine, SynthEngine } from '../types';
 import {
   engineLabels,
   toAttackSeconds,
