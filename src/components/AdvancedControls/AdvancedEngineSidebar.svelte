@@ -1,15 +1,58 @@
 <script lang="ts">
-  import type { AudioParams, ResolvedSynthEngine, SynthEngine } from '../../types';
-  import { engineOptions, formatFrequency, toPitchFrequency, formatSeconds, toTriggerLengthSeconds } from '../../audioConfig';
-  import Knob from '../Knob.svelte';
+  import { tick } from 'svelte';
+  import type { AudioParams, SynthEngine } from '../../types';
+  import { engineOptions } from '../../audioConfig';
 
-  let { params, onChange, resolvedEngine, selectedEngine, recipeLabel } = $props<{
-    params: AudioParams;
+  let { onChange, selectedEngine, recipeLabel } = $props<{
     onChange: <K extends keyof AudioParams>(key: K, value: AudioParams[K]) => void;
-    resolvedEngine: ResolvedSynthEngine;
-    selectedEngine: AudioParams['engine'];
+    selectedEngine: SynthEngine;
     recipeLabel: string;
   }>();
+
+  let engineButtonElements: Array<HTMLButtonElement | null> = [];
+  const hiddenAdvancedEngineValues = new Set<SynthEngine>(['synth', 'poly', 'polyfm']);
+  const visibleEngineOptions = engineOptions
+    .filter((option) => !hiddenAdvancedEngineValues.has(option.value))
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const hiddenSelectedOption = $derived(
+    visibleEngineOptions.some((option) => option.value === selectedEngine)
+      ? null
+      : engineOptions.find((option) => option.value === selectedEngine) ?? null
+  );
+  const mobileSelectedEngine = $derived(hiddenSelectedOption ? '' : selectedEngine);
+
+  const focusSelectedEngine = async (engine: SynthEngine) => {
+    await tick();
+    const selectedIndex = visibleEngineOptions.findIndex((option) => option.value === engine);
+    if (selectedIndex >= 0) {
+      engineButtonElements[selectedIndex]?.focus();
+    }
+  };
+
+  const handleEngineListKeyDown = (event: KeyboardEvent) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.target instanceof HTMLSelectElement) return;
+
+    const currentIndex = visibleEngineOptions.findIndex((option) => option.value === selectedEngine);
+    let nextIndex = currentIndex;
+
+    if (event.key === 'ArrowDown') {
+      nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % visibleEngineOptions.length;
+    } else if (event.key === 'ArrowUp') {
+      nextIndex = currentIndex < 0 ? visibleEngineOptions.length - 1 : (currentIndex - 1 + visibleEngineOptions.length) % visibleEngineOptions.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = visibleEngineOptions.length - 1;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    const nextEngine = visibleEngineOptions[nextIndex];
+    onChange('engine', nextEngine.value);
+    void focusSelectedEngine(nextEngine.value);
+  };
 </script>
 
 <aside
@@ -26,48 +69,54 @@
     </div>
   </div>
 
-  <label id="engine-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-3">
+  <label
+    id="engine-select-field"
+    class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-3 md:hidden"
+  >
     <span class="text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Algorithm</span>
     <select
       id="engine-select-input"
       aria-label="Synthesis algorithm"
-      value={selectedEngine}
+      value={mobileSelectedEngine}
       onchange={(e) => onChange('engine', (e.target as HTMLSelectElement).value as SynthEngine)}
       class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-2 text-[13px] font-medium text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
     >
-      {#each engineOptions as option}
+      {#if hiddenSelectedOption}
+        <option value="" disabled>{hiddenSelectedOption.label} (Recipe Only)</option>
+      {/if}
+      {#each visibleEngineOptions as option}
         <option value={option.value}>{option.label}</option>
       {/each}
     </select>
   </label>
 
-  <div class="advanced-tuning-section rounded-xl border border-[#d7d6d0] bg-white p-3">
-    <div class="mb-4 text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Tuning</div>
-    <div class="flex justify-center">
-      <Knob
-        id="pitch-tuning-knob"
-        ariaLabel="Pitch tuning"
-        label="Pitch"
-        value={params.pitch}
-        displayValue={formatFrequency(toPitchFrequency(params.pitch))}
-        defaultValue={0.5}
-        onChange={(value) => onChange('pitch', value)}
-      />
-    </div>
-  </div>
-
-  <div class="advanced-duration-section rounded-xl border border-[#d7d6d0] bg-white p-3">
-    <div class="mb-4 text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Master Envelope</div>
-    <div class="flex justify-center">
-      <Knob
-        id="decay-master-knob"
-        ariaLabel="Master duration"
-        label="Duration"
-        value={params.decay}
-        displayValue={formatSeconds(toTriggerLengthSeconds(params.decay))}
-        defaultValue={0.3}
-        onChange={(value) => onChange('decay', value)}
-      />
-    </div>
+  <div
+    id="engine-list-view"
+    class="engine-list-view hidden min-h-0 flex-1 flex-col gap-1 overflow-y-auto md:flex"
+    role="listbox"
+    aria-label="Synthesis engines"
+    tabindex="0"
+    aria-activedescendant={hiddenSelectedOption ? undefined : `engine-option-${selectedEngine}`}
+    onkeydown={handleEngineListKeyDown}
+    onfocus={(event) => {
+      if (event.target === event.currentTarget) {
+        void focusSelectedEngine(selectedEngine);
+      }
+    }}
+  >
+    {#each visibleEngineOptions as option, index}
+      <button
+        id={`engine-option-${option.value}`}
+        bind:this={engineButtonElements[index]}
+        onclick={() => onChange('engine', option.value)}
+        role="option"
+        aria-selected={selectedEngine === option.value}
+        class={`engine-list-item rounded-md px-3 py-2 text-left text-sm font-medium transition-colors ${
+          selectedEngine === option.value ? 'bg-[#111] text-white' : 'text-[#555] hover:bg-[#eaeaea]'
+        }`}
+      >
+        {option.label}
+      </button>
+    {/each}
   </div>
 </aside>

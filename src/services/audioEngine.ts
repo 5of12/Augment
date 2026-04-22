@@ -7,6 +7,9 @@ import {
   getResolvedSampleRootNote,
   getSampleSelectionSignature,
   getSelectedSampleUrl,
+  toNoisePlaybackRate,
+  toPluckAttackNoise,
+  toPluckDampeningFrequency,
   toAttackSeconds,
   toEnvelopeDecaySeconds,
   toFatSpreadCents,
@@ -29,6 +32,8 @@ type ManagedSynth =
   | Tone.Synth
   | Tone.MonoSynth
   | Tone.PolySynth<any>
+  | Tone.PluckSynth
+  | Tone.NoiseSynth
   | Tone.MembraneSynth
   | Tone.MetalSynth
   | Tone.FMSynth
@@ -85,7 +90,24 @@ interface GrainPerformanceState extends OutputChain {
   voices: Map<number, GrainVoice>;
 }
 
-type PerformanceState = PolyPerformanceState | SamplerPerformanceState | GrainPerformanceState;
+type InstrumentVoiceSynth = Tone.PluckSynth | Tone.NoiseSynth;
+
+interface InstrumentVoice {
+  synth: InstrumentVoiceSynth;
+  gain: Tone.Gain;
+  disposeTimer: ReturnType<typeof setTimeout> | null;
+}
+
+interface InstrumentPerformanceState extends OutputChain {
+  kind: 'instrument';
+  engine: 'pluck' | 'noise';
+  recipe: RecipeType;
+  signature: string;
+  params: AudioParams;
+  voices: Map<number, InstrumentVoice>;
+}
+
+type PerformanceState = PolyPerformanceState | SamplerPerformanceState | GrainPerformanceState | InstrumentPerformanceState;
 
 const recipeEngineMap: Record<RecipeType, ResolvedSynthEngine> = {
   tap: 'membrane',
@@ -253,8 +275,19 @@ const applyFrequencySweep = (
   synth.frequency.exponentialRampToValueAtTime(endFrequency, endTime);
 };
 
-const triggerNote = (synth: ManagedSynth, note: number | string, duration: number, time: number) => {
-  synth.triggerAttackRelease(note as any, duration, time);
+const triggerNote = (synth: ManagedSynth, note: number | string, duration: number, time: number, velocity = 1) => {
+  if (synth instanceof Tone.PluckSynth) {
+    synth.triggerAttack(note as any, time);
+    synth.triggerRelease(time + duration);
+    return;
+  }
+
+  if (synth instanceof Tone.NoiseSynth) {
+    synth.triggerAttackRelease(duration, time, velocity);
+    return;
+  }
+
+  synth.triggerAttackRelease(note as any, duration, time, velocity);
 };
 
 const triggerRecipePattern = (
@@ -349,6 +382,21 @@ const getEngineOptions = (engine: ResolvedSynthEngine, params: AudioParams) => {
         },
         envelope
       };
+    case 'pluck':
+      return {
+        attackNoise: toPluckAttackNoise(params.pluckAttackNoise),
+        dampening: toPluckDampeningFrequency(params.pluckDampening),
+        resonance: params.pluckResonance,
+        release: toReleaseSeconds(params.release)
+      };
+    case 'noise':
+      return {
+        envelope,
+        noise: {
+          type: params.noiseType,
+          playbackRate: toNoisePlaybackRate(params.noisePlaybackRate)
+        }
+      };
     case 'membrane':
       return {
         pitchDecay: getMembranePitchDecay(params.brightness),
@@ -423,6 +471,10 @@ const createOneShotSynth = async (engine: ResolvedSynthEngine, params: AudioPara
       return new Tone.PolySynth(Tone.Synth, options as ConstructorParameters<typeof Tone.Synth>[0]);
     case 'fat':
       return new Tone.PolySynth(Tone.Synth, options as ConstructorParameters<typeof Tone.Synth>[0]);
+    case 'pluck':
+      return new Tone.PluckSynth(options as ConstructorParameters<typeof Tone.PluckSynth>[0]);
+    case 'noise':
+      return new Tone.NoiseSynth(options as ConstructorParameters<typeof Tone.NoiseSynth>[0]);
     case 'membrane':
       return new Tone.MembraneSynth(options as ConstructorParameters<typeof Tone.MembraneSynth>[0]);
     case 'metal':
@@ -503,6 +555,96 @@ const disposeGrainVoice = (voice: GrainVoice) => {
   voice.gain.dispose();
 };
 
+const createInstrumentVoice = (
+  engine: 'pluck' | 'noise',
+  params: AudioParams,
+  destination: Tone.Filter,
+  velocity: number
+): InstrumentVoice => {
+  const gain = new Tone.Gain(engine === 'pluck' ? Math.max(0.05, velocity) : 1);
+  const synth =
+    engine === 'pluck'
+      ? new Tone.PluckSynth(getEngineOptions(engine, params) as ConstructorParameters<typeof Tone.PluckSynth>[0])
+      : new Tone.NoiseSynth(getEngineOptions(engine, params) as ConstructorParameters<typeof Tone.NoiseSynth>[0]);
+
+  synth.connect(gain);
+  gain.connect(destination);
+
+  return {
+    synth,
+    gain,
+    disposeTimer: null
+  };
+};
+
+const applyInstrumentVoiceSettings = (voice: InstrumentVoice, engine: 'pluck' | 'noise', params: AudioParams) => {
+  if (engine === 'pluck' && voice.synth instanceof Tone.PluckSynth) {
+    voice.synth.attackNoise = toPluckAttackNoise(params.pluckAttackNoise);
+    voice.synth.dampening = toPluckDampeningFrequency(params.pluckDampening);
+    voice.synth.resonance = params.pluckResonance;
+    voice.synth.release = toReleaseSeconds(params.release);
+    return;
+  }
+
+  if (engine === 'noise' && voice.synth instanceof Tone.NoiseSynth) {
+    voice.synth.noise.type = params.noiseType;
+    voice.synth.noise.playbackRate = toNoisePlaybackRate(params.noisePlaybackRate);
+    voice.synth.envelope.attack = toAttackSeconds(params.attack);
+    voice.synth.envelope.decay = toEnvelopeDecaySeconds(params.envelopeDecay);
+    voice.synth.envelope.sustain = params.sustain;
+    voice.synth.envelope.release = toReleaseSeconds(params.release);
+  }
+};
+
+const triggerInstrumentVoiceAttack = (
+  voice: InstrumentVoice,
+  engine: 'pluck' | 'noise',
+  note: string,
+  time: number,
+  velocity: number
+) => {
+  if (engine === 'pluck' && voice.synth instanceof Tone.PluckSynth) {
+    voice.synth.triggerAttack(note, time);
+    return;
+  }
+
+  if (engine === 'noise' && voice.synth instanceof Tone.NoiseSynth) {
+    voice.synth.triggerAttack(time, velocity);
+  }
+};
+
+const scheduleInstrumentVoiceRelease = (
+  voice: InstrumentVoice,
+  engine: 'pluck' | 'noise',
+  params: AudioParams,
+  time: number = Tone.now()
+) => {
+  if (voice.disposeTimer !== null) {
+    clearTimeout(voice.disposeTimer);
+  }
+
+  if (engine === 'pluck' && voice.synth instanceof Tone.PluckSynth) {
+    voice.synth.triggerRelease(time);
+  } else if (engine === 'noise' && voice.synth instanceof Tone.NoiseSynth) {
+    voice.synth.triggerRelease(time);
+  }
+
+  const release = Math.max(0.04, toReleaseSeconds(params.release));
+  voice.disposeTimer = setTimeout(() => {
+    voice.synth.dispose();
+    voice.gain.dispose();
+  }, Math.ceil((release + 0.08) * 1000));
+};
+
+const disposeInstrumentVoice = (voice: InstrumentVoice) => {
+  if (voice.disposeTimer !== null) {
+    clearTimeout(voice.disposeTimer);
+  }
+
+  voice.synth.dispose();
+  voice.gain.dispose();
+};
+
 const buildGrainRecipeGraph = async (recipe: RecipeType, params: AudioParams, time: number, isOffline: boolean) => {
   const pitchFrequency = getPitchFrequency(params.pitch);
   const triggerDuration = getTriggerDuration(params.decay);
@@ -570,6 +712,11 @@ const disposePerformanceState = () => {
   } else if (performanceState.kind === 'sampler') {
     performanceState.sampler.releaseAll();
     performanceState.sampler.dispose();
+  } else if (performanceState.kind === 'instrument') {
+    for (const voice of performanceState.voices.values()) {
+      disposeInstrumentVoice(voice);
+    }
+    performanceState.voices.clear();
   } else {
     for (const voice of performanceState.voices.values()) {
       disposeGrainVoice(voice);
@@ -579,6 +726,17 @@ const disposePerformanceState = () => {
 
   disposeOutputChain(performanceState);
   performanceState = null;
+};
+
+const createPerformancePolySynth = (engine: ResolvedSynthEngine, params: AudioParams, destination: Tone.Filter) => {
+  const VoiceConstructor = performanceVoiceMap[engine];
+  if (!VoiceConstructor) {
+    throw new Error(`Unsupported performance engine: ${engine}`);
+  }
+
+  const synth = new Tone.PolySynth(VoiceConstructor as any, getEngineOptions(engine, params) as any).connect(destination) as PerformanceSynth;
+  synth.maxPolyphony = getPerformanceMaxPolyphony(engine, params);
+  return synth;
 };
 
 const rebuildPerformanceState = async (recipe: RecipeType, params: AudioParams) => {
@@ -617,13 +775,20 @@ const rebuildPerformanceState = async (recipe: RecipeType, params: AudioParams) 
     return;
   }
 
-  const VoiceConstructor = performanceVoiceMap[engine];
-  if (!VoiceConstructor) {
-    throw new Error(`Unsupported performance engine: ${engine}`);
+  if (engine === 'pluck' || engine === 'noise') {
+    performanceState = {
+      kind: 'instrument',
+      engine,
+      recipe,
+      signature,
+      params: { ...params },
+      voices: new Map(),
+      ...chain
+    };
+    return;
   }
 
-  const synth = new Tone.PolySynth(VoiceConstructor as any, getEngineOptions(engine, params) as any).connect(chain.filter) as PerformanceSynth;
-  synth.maxPolyphony = getPerformanceMaxPolyphony(engine, params);
+  const synth = createPerformancePolySynth(engine, params, chain.filter);
 
   performanceState = {
     kind: 'poly',
@@ -648,6 +813,13 @@ export const getRenderDuration = (recipe: RecipeType, params: AudioParams) => {
     1.2,
     getTriggerDuration(params.decay) + envelope.attack + envelope.decay + envelope.release + getRecipeOffset(recipe) + 0.4
   );
+};
+
+const getPerformanceNoteHoldDuration = (params: AudioParams) => Math.max(0.22, getTriggerDuration(params.decay));
+
+export const getPerformanceNoteRenderDuration = (params: AudioParams) => {
+  const envelope = getEnvelope(params);
+  return Math.max(1.2, getPerformanceNoteHoldDuration(params) + envelope.attack + envelope.decay + envelope.release + 0.4);
 };
 
 export const updateActiveParams = (params: AudioParams) => {
@@ -702,6 +874,24 @@ export const updateActiveParams = (params: AudioParams) => {
           activeSynth.maxPolyphony = getPerformanceMaxPolyphony(activeEngine, params);
         }
         break;
+      case 'pluck':
+        if (activeSynth instanceof Tone.PluckSynth) {
+          activeSynth.attackNoise = toPluckAttackNoise(params.pluckAttackNoise);
+          activeSynth.dampening = toPluckDampeningFrequency(params.pluckDampening);
+          activeSynth.resonance = params.pluckResonance;
+          activeSynth.release = toReleaseSeconds(params.release);
+        }
+        break;
+      case 'noise':
+        if (activeSynth instanceof Tone.NoiseSynth) {
+          activeSynth.noise.type = params.noiseType;
+          activeSynth.noise.playbackRate = toNoisePlaybackRate(params.noisePlaybackRate);
+          activeSynth.envelope.attack = toAttackSeconds(params.attack);
+          activeSynth.envelope.decay = toEnvelopeDecaySeconds(params.envelopeDecay);
+          activeSynth.envelope.sustain = params.sustain;
+          activeSynth.envelope.release = toReleaseSeconds(params.release);
+        }
+        break;
       case 'duo':
         if (activeSynth instanceof Tone.DuoSynth) {
           if (currentRecipe !== 'error') activeSynth.frequency.rampTo(primaryFrequency, 0.05);
@@ -753,6 +943,13 @@ export const updatePerformanceInstrument = async (recipe: RecipeType, params: Au
     return;
   }
 
+  if (performanceState.kind === 'instrument') {
+    for (const voice of performanceState.voices.values()) {
+      applyInstrumentVoiceSettings(voice, performanceState.engine, params);
+    }
+    return;
+  }
+
   for (const voice of performanceState.voices.values()) {
     voice.player.grainSize = toGrainSizeSeconds(params.brightness);
     voice.player.overlap = toGrainOverlapSeconds(params.character);
@@ -779,6 +976,20 @@ export const triggerPerformanceNote = async (recipe: RecipeType, params: AudioPa
 
   if (performanceState.kind === 'sampler') {
     performanceState.sampler.triggerAttack(note, now, velocity);
+    return;
+  }
+
+  if (performanceState.kind === 'instrument') {
+    const existingVoice = performanceState.voices.get(midi);
+    if (existingVoice) {
+      disposeInstrumentVoice(existingVoice);
+      performanceState.voices.delete(midi);
+    }
+
+    const voice = createInstrumentVoice(performanceState.engine, params, performanceState.filter, velocity);
+    applyInstrumentVoiceSettings(voice, performanceState.engine, params);
+    triggerInstrumentVoiceAttack(voice, performanceState.engine, note, now, velocity);
+    performanceState.voices.set(midi, voice);
     return;
   }
 
@@ -814,6 +1025,14 @@ export const releasePerformanceNote = (midi: number) => {
     return;
   }
 
+  if (performanceState.kind === 'instrument') {
+    const voice = performanceState.voices.get(midi);
+    if (!voice) return;
+    performanceState.voices.delete(midi);
+    scheduleInstrumentVoiceRelease(voice, performanceState.engine, performanceState.params);
+    return;
+  }
+
   const voice = performanceState.voices.get(midi);
   if (!voice) return;
   performanceState.voices.delete(midi);
@@ -833,9 +1052,97 @@ export const releaseAllPerformanceNotes = () => {
     return;
   }
 
+  if (performanceState.kind === 'instrument') {
+    for (const [midi, voice] of performanceState.voices.entries()) {
+      performanceState.voices.delete(midi);
+      scheduleInstrumentVoiceRelease(voice, performanceState.engine, performanceState.params);
+    }
+    return;
+  }
+
   for (const [midi, voice] of performanceState.voices.entries()) {
     performanceState.voices.delete(midi);
     scheduleGrainVoiceRelease(voice, performanceState.params);
+  }
+};
+
+export const buildPerformanceNoteGraph = async (
+  recipe: RecipeType,
+  params: AudioParams,
+  midi: number,
+  velocity: number,
+  time: number,
+  isOffline: boolean
+) => {
+  const engine = getResolvedEngine(recipe, params.engine);
+  const note = toToneNote(midi);
+  const holdDuration = getPerformanceNoteHoldDuration(params);
+  const chain = createOutputChain(params);
+  const releaseDuration = toReleaseSeconds(params.release);
+
+  if (engine === 'pluck' || engine === 'noise') {
+    const voice = createInstrumentVoice(engine, params, chain.filter, velocity);
+    applyInstrumentVoiceSettings(voice, engine, params);
+    triggerInstrumentVoiceAttack(voice, engine, note, time, velocity);
+
+    if (engine === 'pluck' && voice.synth instanceof Tone.PluckSynth) {
+      voice.synth.triggerRelease(time + holdDuration);
+    } else if (engine === 'noise' && voice.synth instanceof Tone.NoiseSynth) {
+      voice.synth.triggerRelease(time + holdDuration);
+    }
+
+    if (!isOffline) {
+      setTimeout(() => {
+        disposeInstrumentVoice(voice);
+        disposeOutputChain(chain);
+      }, Math.ceil(getPerformanceNoteRenderDuration(params) * 1000));
+    }
+    return;
+  }
+
+  if (engine === 'sampler') {
+    const sampler = await createSampler(params);
+    sampler.connect(chain.filter);
+    sampler.triggerAttack(note, time, velocity);
+    sampler.triggerRelease(note, time + holdDuration);
+
+    if (!isOffline) {
+      const lifetimeMs = Math.ceil(getPerformanceNoteRenderDuration(params) * 1000);
+      setTimeout(() => {
+        sampler.dispose();
+        disposeOutputChain(chain);
+      }, lifetimeMs);
+    }
+    return;
+  }
+
+  if (engine === 'grain') {
+    const voice = await createGrainVoice(params, note, chain.filter, velocity, true, time);
+    voice.player.start(time);
+    voice.gain.gain.setValueAtTime(Math.max(0.05, velocity), time + holdDuration);
+    voice.gain.gain.linearRampToValueAtTime(0.0001, time + holdDuration + releaseDuration);
+    voice.player.stop(time + holdDuration + releaseDuration + 0.05);
+
+    if (!isOffline) {
+      setTimeout(() => {
+        voice.player.dispose();
+        voice.gain.dispose();
+        disposeOutputChain(chain);
+      }, Math.ceil(getPerformanceNoteRenderDuration(params) * 1000));
+    }
+    return;
+  }
+
+  const synth = createPerformancePolySynth(engine, params, chain.filter);
+  synth.triggerAttack(note, time, velocity);
+  synth.triggerRelease(note, time + holdDuration);
+
+  if (!isOffline) {
+    const lifetimeMs = Math.ceil(getPerformanceNoteRenderDuration(params) * 1000);
+    setTimeout(() => {
+      synth.dispose();
+      disposeOutputChain(chain);
+    }, lifetimeMs);
   }
 };
 

@@ -1,14 +1,18 @@
 <script lang="ts">
   import { Layers2 } from 'lucide-svelte';
-  import type { AudioParams, FilterType, ResolvedSynthEngine, SynthOscillatorType } from '../../types';
+  import type { AudioParams, FilterType, NoiseType, ResolvedSynthEngine, SynthOscillatorType } from '../../types';
   import {
     engineLabels,
     filterOptions,
     formatFrequency,
+    noiseTypeOptions,
     oscillatorOptions,
     toFatSpreadCents,
     toFatVoiceCount,
     toFilterCutoffFrequency,
+    toNoisePlaybackRate,
+    toPluckAttackNoise,
+    toPluckDampeningFrequency,
     toFilterQ,
     toGrainOverlapSeconds,
     toGrainSizeSeconds,
@@ -28,7 +32,17 @@
     onClearUploadedSamples: () => void;
   }>();
 
-  type AdvancedKnobParamKey = 'pitch' | 'decay' | 'brightness' | 'character' | 'filterCutoff' | 'filterQ';
+  type AdvancedKnobParamKey =
+    | 'pitch'
+    | 'decay'
+    | 'brightness'
+    | 'character'
+    | 'filterCutoff'
+    | 'filterQ'
+    | 'noisePlaybackRate'
+    | 'pluckAttackNoise'
+    | 'pluckDampening'
+    | 'pluckResonance';
 
   interface SynthParameterDefinition {
     key: AdvancedKnobParamKey;
@@ -148,6 +162,42 @@
             displayValue: (params) => `${toFatVoiceCount(params.character)}`
           }
         ];
+      case 'pluck':
+        return [
+          ...commonControls,
+          {
+            key: 'pluckAttackNoise',
+            label: 'Attack',
+            ariaLabel: 'Pluck attack noise',
+            defaultValue: 0.43,
+            displayValue: (params) => `${toPluckAttackNoise(params.pluckAttackNoise).toFixed(2)}`
+          },
+          {
+            key: 'pluckDampening',
+            label: 'Damp',
+            ariaLabel: 'Pluck dampening frequency',
+            defaultValue: 0.56,
+            displayValue: (params) => formatFrequency(toPluckDampeningFrequency(params.pluckDampening))
+          },
+          {
+            key: 'pluckResonance',
+            label: 'Resonance',
+            ariaLabel: 'Pluck resonance',
+            defaultValue: 0.7,
+            displayValue: (params) => `${params.pluckResonance.toFixed(2)}`
+          }
+        ];
+      case 'noise':
+        return [
+          ...commonControls,
+          {
+            key: 'noisePlaybackRate',
+            label: 'Rate',
+            ariaLabel: 'Noise playback rate',
+            defaultValue: 0.5,
+            displayValue: (params) => `${toNoisePlaybackRate(params.noisePlaybackRate).toFixed(2)}x`
+          }
+        ];
       case 'metal':
         return [
           ...commonControls,
@@ -234,6 +284,9 @@
   ));
   let fileInputElement = $state<HTMLInputElement | null>(null);
   let usesSampleSource = $derived(resolvedEngine === 'sampler' || resolvedEngine === 'grain');
+  let usesNoiseSource = $derived(resolvedEngine === 'noise');
+  let usesOscillatorControls = $derived(!usesSampleSource && !usesNoiseSource && resolvedEngine !== 'pluck');
+  let showsVoiceSection = $derived(usesSampleSource || usesNoiseSource || usesOscillatorControls);
   let supportsSecondaryVoice = $derived(
     resolvedEngine === 'fm' || resolvedEngine === 'am' || resolvedEngine === 'polyfm' || resolvedEngine === 'duo'
   );
@@ -248,6 +301,9 @@
   );
   let modulatorLabel = $derived(resolvedEngine === 'duo' ? 'Voice B' : 'Modulator');
   let samplePanelTitle = $derived(resolvedEngine === 'grain' ? 'Source' : 'Sample');
+  let voicePanelTitle = $derived(
+    usesSampleSource ? samplePanelTitle : usesNoiseSource ? 'Noise' : 'Voice'
+  );
   let sampleStatusLabel = $derived(
     params.sampleSource === 'upload' && Object.keys(params.uploadedSampleUrls).length > 0
       ? params.uploadedSampleLabel || `${availableSampleNotes.length} samples`
@@ -269,84 +325,100 @@
     </div>
   </div>
 
-  <section
-    id="voice-control-panel"
-    class="voice-control-panel rounded-[1.25rem] border border-[#dfdfdd] bg-white p-3"
-  >
-    <div class="mb-3 text-[10px] font-bold uppercase tracking-[0.22em] text-[#8c8a84]">
-      {usesSampleSource ? samplePanelTitle : 'Voice'}
-    </div>
-    {#if usesSampleSource}
-      <div class="space-y-3">
-        <label id="sample-source-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
-          <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Source</span>
-          <select
-            id="sample-source-select"
-            aria-label="Sample source"
-            value={params.sampleSource}
-            onchange={(e) => onChange('sampleSource', (e.target as HTMLSelectElement).value as AudioParams['sampleSource'])}
-            class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
-          >
-            <option value="stock">Stock Piano</option>
-            <option value="upload">Uploaded Samples</option>
-          </select>
-        </label>
+  {#if showsVoiceSection}
+    <section
+      id="voice-control-panel"
+      class="voice-control-panel rounded-[1.25rem] border border-[#dfdfdd] bg-white p-3"
+    >
+      <div class="mb-3 text-[10px] font-bold uppercase tracking-[0.22em] text-[#8c8a84]">
+        {voicePanelTitle}
+      </div>
+      {#if usesSampleSource}
+        <div class="space-y-3">
+          <label id="sample-source-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
+            <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Source</span>
+            <select
+              id="sample-source-select"
+              aria-label="Sample source"
+              value={params.sampleSource}
+              onchange={(e) => onChange('sampleSource', (e.target as HTMLSelectElement).value as AudioParams['sampleSource'])}
+              class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
+            >
+              <option value="stock">Stock Piano</option>
+              <option value="upload">Uploaded Samples</option>
+            </select>
+          </label>
 
-        <label id="sample-root-note-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
-          <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Root Note</span>
+          <label id="sample-root-note-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
+            <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Root Note</span>
+            <select
+              id="sample-root-note-select"
+              aria-label="Sample root note"
+              value={params.sampleRootNote}
+              onchange={(e) => onChange('sampleRootNote', (e.target as HTMLSelectElement).value)}
+              class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
+            >
+              {#each availableSampleNotes as note}
+                <option value={note}>{note}</option>
+              {/each}
+            </select>
+          </label>
+
+          <div id="sample-upload-panel" class="sample-upload-panel rounded-xl border border-[#d7d6d0] bg-[#faf9f5] p-2.5">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Library</span>
+              <span class="truncate text-[11px] font-medium text-[#5e5b55]">{sampleStatusLabel}</span>
+            </div>
+            <div class="flex gap-2">
+              <input
+                id="sample-upload-input"
+                bind:this={fileInputElement}
+                type="file"
+                accept="audio/*"
+                multiple
+                class="hidden"
+                onchange={(e) => {
+                  onSampleUpload((e.target as HTMLInputElement).files);
+                  (e.target as HTMLInputElement).value = '';
+                }}
+              />
+              <button
+                id="sample-upload-button"
+                type="button"
+                onclick={() => fileInputElement?.click()}
+                class="flex-1 rounded-lg border border-[#d7d6d0] bg-white px-3 py-2 text-[12px] font-medium text-[#111] transition-colors hover:border-[#ff4a00] hover:text-[#ff4a00]"
+              >
+                Upload
+              </button>
+              {#if Object.keys(params.uploadedSampleUrls).length > 0}
+                <button
+                  id="clear-sample-upload-button"
+                  type="button"
+                  onclick={onClearUploadedSamples}
+                  class="rounded-lg border border-[#d7d6d0] bg-white px-3 py-2 text-[12px] font-medium text-[#5e5b55] transition-colors hover:border-[#111] hover:text-[#111]"
+                >
+                  Clear
+                </button>
+              {/if}
+            </div>
+          </div>
+        </div>
+      {:else if usesNoiseSource}
+        <label id="noise-type-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
+          <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Noise Type</span>
           <select
-            id="sample-root-note-select"
-            aria-label="Sample root note"
-            value={params.sampleRootNote}
-            onchange={(e) => onChange('sampleRootNote', (e.target as HTMLSelectElement).value)}
+            id="noise-type-select"
+            aria-label="Noise type"
+            value={params.noiseType}
+            onchange={(e) => onChange('noiseType', (e.target as HTMLSelectElement).value as NoiseType)}
             class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-1.5 text-[13px] text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
           >
-            {#each availableSampleNotes as note}
-              <option value={note}>{note}</option>
+            {#each noiseTypeOptions as option}
+              <option value={option.value}>{option.label}</option>
             {/each}
           </select>
         </label>
-
-        <div id="sample-upload-panel" class="sample-upload-panel rounded-xl border border-[#d7d6d0] bg-[#faf9f5] p-2.5">
-          <div class="mb-2 flex items-center justify-between gap-2">
-            <span class="text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">Library</span>
-            <span class="truncate text-[11px] font-medium text-[#5e5b55]">{sampleStatusLabel}</span>
-          </div>
-          <div class="flex gap-2">
-            <input
-              id="sample-upload-input"
-              bind:this={fileInputElement}
-              type="file"
-              accept="audio/*"
-              multiple
-              class="hidden"
-              onchange={(e) => {
-                onSampleUpload((e.target as HTMLInputElement).files);
-                (e.target as HTMLInputElement).value = '';
-              }}
-            />
-            <button
-              id="sample-upload-button"
-              type="button"
-              onclick={() => fileInputElement?.click()}
-              class="flex-1 rounded-lg border border-[#d7d6d0] bg-white px-3 py-2 text-[12px] font-medium text-[#111] transition-colors hover:border-[#ff4a00] hover:text-[#ff4a00]"
-            >
-              Upload
-            </button>
-            {#if Object.keys(params.uploadedSampleUrls).length > 0}
-              <button
-                id="clear-sample-upload-button"
-                type="button"
-                onclick={onClearUploadedSamples}
-                class="rounded-lg border border-[#d7d6d0] bg-white px-3 py-2 text-[12px] font-medium text-[#5e5b55] transition-colors hover:border-[#111] hover:text-[#111]"
-              >
-                Clear
-              </button>
-            {/if}
-          </div>
-        </div>
-      </div>
-    {:else}
+      {:else}
       <div class="space-y-3">
         <label id="oscillator-select-field" class="advanced-select-field flex flex-col gap-2 rounded-xl border border-[#d7d6d0] bg-white p-2.5">
           <span class="advanced-select-label text-[10px] font-bold uppercase tracking-[0.22em] text-[#888]">{oscillatorLabel}</span>
@@ -379,8 +451,9 @@
           </label>
         {/if}
       </div>
-    {/if}
-  </section>
+      {/if}
+    </section>
+  {/if}
 
   <section
     id="filter-control-panel"

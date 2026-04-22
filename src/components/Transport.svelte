@@ -6,11 +6,15 @@
     onPlay,
     onRandomize,
     onExport,
+    children,
+    leftContent,
     centerContent
   } = $props<{
     onPlay: () => void;
     onRandomize: () => void;
     onExport: () => void;
+    children?: Snippet;
+    leftContent?: Snippet;
     centerContent?: Snippet;
   }>();
 </script>
@@ -19,7 +23,7 @@
   id="transport-bar"
   class="transport-bar grid shrink-0 grid-cols-1 gap-3 border-t border-[#dfdfdd] bg-[#fcfcfc] px-4 py-3 md:grid-cols-[1fr_auto_1fr] md:items-center md:px-5"
 >
-  <div class="flex items-center gap-3 md:justify-self-start">
+  <div class="flex flex-wrap items-center gap-3 md:justify-self-start">
     <button
       onclick={onPlay}
       aria-label="Play sound"
@@ -34,6 +38,7 @@
     >
       <Dice5 size={16} /> Random
     </button>
+    {@render leftContent?.()}
   </div>
   <div id="transport-center-slot" class="transport-center-slot flex items-center justify-center">
     {@render centerContent?.()}

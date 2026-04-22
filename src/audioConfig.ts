@@ -2,6 +2,7 @@ import type {
   AudioParams,
   BasicParamKey,
   FilterType,
+  NoiseType,
   ResolvedSynthEngine,
   SynthEngine,
   SynthOscillatorType
@@ -25,12 +26,17 @@ export const defaultAudioParams: AudioParams = {
   engine: 'auto',
   oscillatorType: 'sine',
   modulationType: 'triangle',
+  noiseType: 'white',
+  noisePlaybackRate: 0.5,
   filterType: 'lowpass',
   filterQ: 0.18,
   attack: 0.03,
   envelopeDecay: 0.28,
   sustain: 0.16,
   release: 0.22,
+  pluckAttackNoise: 0.43,
+  pluckDampening: 0.56,
+  pluckResonance: 0.7,
   sampleSource: 'stock',
   sampleRootNote: 'C4',
   uploadedSampleUrls: {},
@@ -53,6 +59,8 @@ export const engineLabels: Record<ResolvedSynthEngine, string> = {
   am: 'AMSynth',
   poly: 'PolySynth',
   fat: 'FatOscillator',
+  pluck: 'PluckSynth',
+  noise: 'NoiseSynth',
   membrane: 'MembraneSynth',
   metal: 'MetalSynth',
   duo: 'DuoSynth',
@@ -68,6 +76,8 @@ export const engineOptions: Array<{ value: SynthEngine; label: string }> = [
   { value: 'am', label: 'AMSynth' },
   { value: 'poly', label: 'PolySynth' },
   { value: 'fat', label: 'FatOscillator' },
+  { value: 'pluck', label: 'PluckSynth' },
+  { value: 'noise', label: 'NoiseSynth' },
   { value: 'metal', label: 'MetalSynth' },
   { value: 'grain', label: 'Granular Synthesis' },
   { value: 'sampler', label: 'Sampler' },
@@ -86,6 +96,12 @@ export const oscillatorOptions: Array<{ value: SynthOscillatorType; label: strin
   { value: 'fattriangle', label: 'Fat Triangle' },
   { value: 'fatsawtooth', label: 'Fat Saw' },
   { value: 'pulse', label: 'Pulse' }
+];
+
+export const noiseTypeOptions: Array<{ value: NoiseType; label: string }> = [
+  { value: 'white', label: 'White' },
+  { value: 'pink', label: 'Pink' },
+  { value: 'brown', label: 'Brown' }
 ];
 
 export const filterOptions: Array<{ value: FilterType; label: string }> = [
@@ -108,6 +124,9 @@ export const toPolyDetuneCents = (value: number) => value * 30;
 export const toPolyVoiceCount = (value: number) => 2 + Math.round(value * 6);
 export const toFatSpreadCents = (value: number) => 8 + value * 72;
 export const toFatVoiceCount = (value: number) => 2 + Math.round(value * 4);
+export const toNoisePlaybackRate = (value: number) => 0.25 * Math.pow(16, value);
+export const toPluckAttackNoise = (value: number) => 0.1 * Math.pow(200, value);
+export const toPluckDampeningFrequency = (value: number) => 200 + value * 6800;
 export const toGrainSizeSeconds = (value: number) => 0.03 + value * 0.35;
 export const toGrainOverlapSeconds = (value: number) => 0.01 + value * 0.22;
 
