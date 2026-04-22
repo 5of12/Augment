@@ -6,14 +6,12 @@
     onPlay,
     onRandomize,
     onExport,
-    children,
     leftContent,
     centerContent
   } = $props<{
     onPlay: () => void;
     onRandomize: () => void;
     onExport: () => void;
-    children?: Snippet;
     leftContent?: Snippet;
     centerContent?: Snippet;
   }>();
