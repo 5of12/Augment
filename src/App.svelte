@@ -54,6 +54,7 @@
   const midiSupported = typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
 
   let activePerformanceSources = new Map<number, Set<string>>();
+  let midiAccess: MIDIAccess | null = null;
   let checkStateInterval: number;
 
   const resolvedEngine = $derived(getResolvedEngine(recipe as any, params.engine as any));
@@ -77,15 +78,18 @@
     }
   });
 
-  const getModeScopedParams = () => {
-    if (isAdvancedMode) return params;
-    return syncBrightnessToCutoff({ ...params, engine: 'auto' as const });
+  const getModeScopedParams = (sourceParams: AudioParams = params) => {
+    if (isAdvancedMode) return sourceParams;
+    return syncBrightnessToCutoff({ ...sourceParams, engine: 'auto' as const });
   };
 
   $effect(() => {
     updateActiveParams(getModeScopedParams());
     if (isAdvancedMode) {
       void updatePerformanceInstrument(recipe, getModeScopedParams());
+    } else if (activePerformanceSources.size > 0 || activePerformanceNotes.length > 0) {
+      clearPerformanceSources();
+      teardownPerformanceInstrument();
     }
   });
 
@@ -96,8 +100,41 @@
     }
   });
 
+  const clearPerformanceSources = () => {
+    activePerformanceSources = new Map();
+    activePerformanceNotes = [];
+    releaseAllPerformanceNotes();
+  };
+
+  const cleanupMidiAccess = (access: MIDIAccess | null = midiAccess) => {
+    if (!access) return;
+
+    access.onstatechange = null;
+    for (const input of access.inputs.values()) {
+      input.onmidimessage = null;
+    }
+
+    if (access === midiAccess) {
+      midiAccess = null;
+    }
+  };
+
+  const isInteractiveTarget = (target: EventTarget | null) =>
+    target instanceof HTMLElement &&
+    (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
+
+  const handleAdvancedModeChange = (nextValue: boolean) => {
+    isAdvancedMode = nextValue;
+
+    if (!nextValue) {
+      clearPerformanceSources();
+      teardownPerformanceInstrument();
+    }
+  };
+
   onDestroy(() => {
     revokeUploadedSampleUrls(params.uploadedSampleUrls);
+    cleanupMidiAccess();
   });
 
   onMount(() => {
@@ -153,28 +190,29 @@
 
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+    if (isInteractiveTarget(event.target)) return;
 
     const key = event.key.toLowerCase();
+    const musicalTypingNote = isAdvancedMode ? MUSICAL_TYPING_KEYMAP[key] : undefined;
+
+    if (musicalTypingNote) {
+      if (!event.repeat) {
+        event.preventDefault();
+        engagePerformanceNote(musicalTypingNote.midi, `keyboard:${musicalTypingNote.midi}`);
+      }
+      return;
+    }
+
     if (key === ' ') {
       event.preventDefault();
       void handlePlay();
       return;
     } else if (key === 'r') {
-      handleRandomize();
+      void handleRandomize();
       return;
     } else if (key === 'e') {
       exportWav(recipe as any, getModeScopedParams());
       return;
-    }
-
-    if (!isAdvancedMode) return;
-
-    const note = MUSICAL_TYPING_KEYMAP[key];
-
-    if (note && !event.repeat) {
-      event.preventDefault();
-      engagePerformanceNote(note.midi, `keyboard:${note.midi}`);
     }
   };
 
@@ -198,33 +236,35 @@
     };
   });
 
-  const handleMidiMessage = (event: any) => {
-    if (!isAdvancedMode) return;
-    if (!event.data) return;
-
-    const [statusByte, data1, data2] = event.data;
-    const messageType = statusByte & 0xf0;
-    const midiChannel = statusByte & 0x0f;
-
-    if (messageType === 0x90) {
-      const velocity = data2 / 127;
-      if (velocity > 0) {
-        engagePerformanceNote(data1, `midi:${data1}`, velocity);
-      } else {
-        releasePerformanceSource(data1, `midi:${data1}`);
-      }
-    } else if (messageType === 0x80) {
-      releasePerformanceSource(data1, `midi:${data1}`);
-    }
-  };
-
   const refreshMidiInputs = (access: MIDIAccess) => {
-    const inputs = Array.from(access.inputs.values());
+    const inputs = Array.from(access.inputs.values()).filter((input) => input.state === 'connected');
     const names = inputs.map((input) => input.name || 'Unknown MIDI Device');
     midiInputNames = names;
 
+    for (const input of access.inputs.values()) {
+      input.onmidimessage = null;
+    }
+
     for (const input of inputs) {
-      input.onmidimessage = handleMidiMessage;
+      input.onmidimessage = (event) => {
+        if (!isAdvancedMode || !event.data) return;
+
+        const [statusByte, data1, data2 = 0] = event.data;
+        const messageType = statusByte & 0xf0;
+        const midiChannel = statusByte & 0x0f;
+        const sourceId = `midi:${input.id}:${midiChannel}:${data1}`;
+
+        if (messageType === 0x90) {
+          const velocity = data2 / 127;
+          if (velocity > 0) {
+            engagePerformanceNote(data1, sourceId, velocity);
+          } else {
+            releasePerformanceSource(data1, sourceId);
+          }
+        } else if (messageType === 0x80) {
+          releasePerformanceSource(data1, sourceId);
+        }
+      };
     }
   };
 
@@ -236,7 +276,9 @@
 
     try {
       midiError = null;
+      cleanupMidiAccess();
       const access = await navigator.requestMIDIAccess();
+      midiAccess = access;
       isMidiEnabled = true;
 
       refreshMidiInputs(access);
@@ -260,13 +302,20 @@
     await playSound(recipe as any, getModeScopedParams());
   };
 
-  const handleRandomize = () => {
-    const p = { ...params };
-    p.pitch = Math.random();
-    p.decay = Math.random();
-    p.brightness = Math.random();
-    p.character = Math.random();
-    params = isAdvancedMode ? p : syncBrightnessToCutoff(p);
+  const handleRandomize = async () => {
+    const randomizedParams = {
+      ...params,
+      pitch: Math.random(),
+      decay: Math.random(),
+      brightness: Math.random(),
+      character: Math.random()
+    };
+    const nextParams = isAdvancedMode ? randomizedParams : syncBrightnessToCutoff(randomizedParams);
+    params = nextParams;
+
+    await Tone.start();
+    isAudioStarted = true;
+    await playSound(recipe as any, getModeScopedParams(nextParams));
   };
 
   const handleRecipeSelect = async (r: RecipeType) => {
@@ -366,7 +415,7 @@
         <div id="mode-toggle-region" class="mode-toggle-region flex justify-start md:justify-end">
           <ToggleSwitch
             checked={isAdvancedMode}
-            onChange={(v) => (isAdvancedMode = v)}
+            onChange={handleAdvancedModeChange}
             label="Advanced"
           />
         </div>

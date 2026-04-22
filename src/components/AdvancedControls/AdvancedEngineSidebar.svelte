@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AudioParams, ResolvedSynthEngine } from '../../types';
+  import type { AudioParams, ResolvedSynthEngine, SynthEngine } from '../../types';
   import { engineOptions, formatFrequency, toPitchFrequency, formatSeconds, toTriggerLengthSeconds } from '../../audioConfig';
   import Knob from '../Knob.svelte';
 
@@ -32,7 +32,7 @@
       id="engine-select-input"
       aria-label="Synthesis algorithm"
       value={selectedEngine}
-      onchange={(e) => onChange('engine', (e.target as HTMLSelectElement).value as any)}
+      onchange={(e) => onChange('engine', (e.target as HTMLSelectElement).value as SynthEngine)}
       class="advanced-select-input rounded-lg border border-[#d7d6d0] bg-[#faf9f5] px-3 py-2 text-[13px] font-medium text-[#111] outline-none transition-colors focus:border-[#ff4a00]"
     >
       {#each engineOptions as option}

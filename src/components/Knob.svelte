@@ -49,7 +49,9 @@
 
   function handlePointerUp(e: PointerEvent) {
     isDragging = false;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    if ((e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    }
   }
 
   function handlePointerCancel() {

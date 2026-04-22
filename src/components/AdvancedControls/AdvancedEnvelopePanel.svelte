@@ -61,10 +61,16 @@
 
   const toSvgPoint = (clientX: number, clientY: number) => {
     if (!svgElement) return null;
+    const ctm = svgElement.getScreenCTM();
+    if (!ctm) return null;
     const pt = svgElement.createSVGPoint();
     pt.x = clientX;
     pt.y = clientY;
-    return pt.matrixTransform(svgElement.getScreenCTM()?.inverse());
+    return pt.matrixTransform(ctm.inverse());
+  };
+
+  const clearDragState = () => {
+    dragState = null;
   };
 
   const handlePointerMove = (event: PointerEvent) => {
@@ -113,7 +119,7 @@
   });
 </script>
 
-<svelte:window onpointermove={handlePointerMove} />
+<svelte:window onpointermove={handlePointerMove} onpointerup={clearDragState} onpointercancel={clearDragState} />
 
 <div id="advanced-adsr-panel" class="advanced-adsr-panel flex flex-1 flex-col gap-4 bg-[#fdfdfc] p-4 md:p-5">
   <div class="adsr-panel-header flex items-center justify-between">
@@ -178,11 +184,13 @@
             (event.currentTarget as SVGGElement).setPointerCapture(event.pointerId);
           }}
           onpointerup={(event) => {
-            dragState = null;
+            clearDragState();
             if ((event.currentTarget as SVGGElement).hasPointerCapture(event.pointerId)) {
               (event.currentTarget as SVGGElement).releasePointerCapture(event.pointerId);
             }
           }}
+          onpointercancel={clearDragState}
+          onlostpointercapture={clearDragState}
         >
           <circle cx={point.x} cy={point.y} r="9" fill={tone} fill-opacity="0.18" />
           <circle cx={point.x} cy={point.y} r="5.5" fill={tone} />
