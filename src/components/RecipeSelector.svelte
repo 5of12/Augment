@@ -30,22 +30,23 @@
     </select>
   </label>
 
-  <div
+  <ul
     id="recipe-list-view"
     class="recipe-list-view hidden max-h-full min-h-0 flex-col gap-1 overflow-y-auto md:flex"
-    role="list"
     aria-label="Sound types"
   >
     {#each recipes as recipe}
-      <button
-        id={`recipe-option-${recipe}`}
-        onclick={() => onSelect(recipe)}
-        class={`recipe-list-item rounded-md px-3 py-2 text-left text-sm font-medium transition-colors ${
-          currentRecipe === recipe ? 'bg-[#111] text-white' : 'text-[#555] hover:bg-[#eaeaea]'
-        }`}
-      >
-        {recipe.charAt(0).toUpperCase() + recipe.slice(1)}
-      </button>
+      <li>
+        <button
+          id={`recipe-option-${recipe}`}
+          onclick={() => onSelect(recipe)}
+          class={`recipe-list-item w-full rounded-md px-3 py-2 text-left text-sm font-medium transition-colors ${
+            currentRecipe === recipe ? 'bg-[#111] text-white' : 'text-[#555] hover:bg-[#eaeaea]'
+          }`}
+        >
+          {recipe.charAt(0).toUpperCase() + recipe.slice(1)}
+        </button>
+      </li>
     {/each}
-  </div>
+  </ul>
 </div>
