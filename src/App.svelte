@@ -3,12 +3,16 @@
   import * as Tone from 'tone';
   import { Wand2, Activity, Keyboard } from 'lucide-svelte';
   import { slide } from 'svelte/transition';
-  import type { AudioParams, RecipeType, Variant } from './types';
+  import type { AudioExportRequest, AudioParams, PerformanceNoteExportRequest, RecipeType, Variant } from './types';
   import {
     defaultAudioParams,
+    formatFrequency,
+    formatSeconds,
     getAvailableSampleNotes,
     getResolvedSampleRootNote,
-    syncBrightnessToCutoff
+    syncBrightnessToCutoff,
+    toPitchFrequency,
+    toTriggerLengthSeconds
   } from './audioConfig';
   import {
     getEngineTypeForRecipe,
@@ -27,6 +31,7 @@
   import RecipeSelector from './components/RecipeSelector.svelte';
   import ParameterGrid from './components/ParameterGrid.svelte';
   import Transport from './components/Transport.svelte';
+  import Knob from './components/Knob.svelte';
   import AdvancedEngineSidebar from './components/AdvancedControls/AdvancedEngineSidebar.svelte';
   import AdvancedEnvelopePanel from './components/AdvancedControls/AdvancedEnvelopePanel.svelte';
   import AdvancedSynthParametersPanel from './components/AdvancedControls/AdvancedSynthParametersPanel.svelte';
@@ -56,17 +61,76 @@
   let activePerformanceSources = new Map<number, Set<string>>();
   let midiAccess: MIDIAccess | null = null;
   let checkStateInterval: number;
+  let lastPerformanceNote: PerformanceNoteExportRequest | null = null;
 
   const resolvedEngine = $derived(getResolvedEngine(recipe as any, params.engine as any));
   const advancedSelectedEngine = $derived(params.engine === 'auto' ? resolvedEngine : params.engine);
   const availableSampleNotes = $derived(getAvailableSampleNotes(params));
 
-  const revokeUploadedSampleUrls = (urls: Record<string, string>) => {
+  const getBlobUrls = (urls: Record<string, string>) =>
+    Object.values(urls).filter((url) => url.startsWith('blob:'));
+
+  const snapshotParams = (sourceParams: AudioParams): AudioParams => ({
+    ...sourceParams,
+    uploadedSampleUrls: { ...sourceParams.uploadedSampleUrls }
+  });
+
+  const revokeUploadedSampleUrls = (urls: Record<string, string>, preservedUrls: Set<string> = new Set()) => {
     for (const url of Object.values(urls)) {
-      if (url.startsWith('blob:')) {
+      if (url.startsWith('blob:') && !preservedUrls.has(url)) {
         URL.revokeObjectURL(url);
       }
     }
+  };
+
+  const clearLastPerformanceNote = (preservedUrls: Set<string> = new Set()) => {
+    if (!lastPerformanceNote) return;
+    revokeUploadedSampleUrls(lastPerformanceNote.params.uploadedSampleUrls, preservedUrls);
+    lastPerformanceNote = null;
+  };
+
+  const setLastPerformanceNote = (nextSnapshot: PerformanceNoteExportRequest) => {
+    const preservedUrls = new Set<string>([
+      ...getBlobUrls(params.uploadedSampleUrls),
+      ...getBlobUrls(nextSnapshot.params.uploadedSampleUrls)
+    ]);
+    clearLastPerformanceNote(preservedUrls);
+    lastPerformanceNote = nextSnapshot;
+  };
+
+  const rememberPerformanceNote = (
+    midi: number,
+    velocity: number,
+    sourceRecipe: RecipeType = recipe,
+    sourceParams: AudioParams = getModeScopedParams()
+  ) => {
+    setLastPerformanceNote({
+      kind: 'performance-note',
+      recipe: sourceRecipe,
+      params: snapshotParams(sourceParams),
+      midi,
+      velocity
+    });
+  };
+
+  const syncLastPerformanceNoteParams = (sourceParams: AudioParams) => {
+    if (!lastPerformanceNote || activePerformanceSources.size === 0) return;
+    setLastPerformanceNote({
+      ...lastPerformanceNote,
+      params: snapshotParams(sourceParams)
+    });
+  };
+
+  const buildExportRequest = (): AudioExportRequest => {
+    if (isAdvancedMode && lastPerformanceNote) {
+      return lastPerformanceNote;
+    }
+
+    return {
+      kind: 'recipe',
+      recipe,
+      params: snapshotParams(getModeScopedParams())
+    };
   };
 
   $effect(() => {
@@ -97,6 +161,12 @@
     const resolvedRootNote = getResolvedSampleRootNote(params);
     if (params.sampleRootNote !== resolvedRootNote) {
       params = { ...params, sampleRootNote: resolvedRootNote };
+    }
+  });
+
+  $effect(() => {
+    if (params.engine === 'synth') {
+      params = { ...params, engine: 'mono' };
     }
   });
 
@@ -133,7 +203,9 @@
   };
 
   onDestroy(() => {
+    const activeParamUrls = new Set(getBlobUrls(params.uploadedSampleUrls));
     revokeUploadedSampleUrls(params.uploadedSampleUrls);
+    clearLastPerformanceNote(activeParamUrls);
     cleanupMidiAccess();
   });
 
@@ -168,7 +240,9 @@
 
     if (isFirstSource) {
       isAudioStarted = true;
-      void triggerPerformanceNote(recipe as any, params, midi, velocity);
+      const performanceParams = getModeScopedParams();
+      rememberPerformanceNote(midi, velocity, recipe, performanceParams);
+      void triggerPerformanceNote(recipe as any, performanceParams, midi, velocity);
     }
   };
 
@@ -186,6 +260,10 @@
     }
 
     syncActivePerformanceState();
+  };
+
+  const handleExport = async () => {
+    await exportWav(buildExportRequest());
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -211,7 +289,7 @@
       void handleRandomize();
       return;
     } else if (key === 'e') {
-      exportWav(recipe as any, getModeScopedParams());
+      void handleExport();
       return;
     }
   };
@@ -331,9 +409,17 @@
     if (!isAdvancedMode && key === 'brightness') {
       const finalParams = syncBrightnessToCutoff(p);
       params = finalParams;
+      syncLastPerformanceNoteParams(finalParams);
     } else {
       params = p;
+      syncLastPerformanceNoteParams(p);
     }
+  };
+
+  const handleParamPatch = (patch: Partial<AudioParams>) => {
+    const nextParams = { ...params, ...patch };
+    params = nextParams;
+    syncLastPerformanceNoteParams(nextParams);
   };
 
   const handleSampleUpload = (files: FileList | null) => {
@@ -348,18 +434,20 @@
     const nextNotes = sortSampleNotes(Object.keys(nextUrls));
     const nextRootNote = nextNotes.includes(params.sampleRootNote) ? params.sampleRootNote : nextNotes[0] ?? 'C4';
 
-    revokeUploadedSampleUrls(params.uploadedSampleUrls);
-    params = {
+    revokeUploadedSampleUrls(params.uploadedSampleUrls, new Set(getBlobUrls(lastPerformanceNote?.params.uploadedSampleUrls ?? {})));
+    const nextParams = {
       ...params,
-      sampleSource: 'upload',
+      sampleSource: 'upload' as const,
       uploadedSampleUrls: nextUrls,
       uploadedSampleLabel: files.length === 1 ? files[0].name : `${files.length} samples`,
       sampleRootNote: nextRootNote
     };
+    params = nextParams;
+    syncLastPerformanceNoteParams(nextParams);
   };
 
   const clearUploadedSamples = () => {
-    revokeUploadedSampleUrls(params.uploadedSampleUrls);
+    revokeUploadedSampleUrls(params.uploadedSampleUrls, new Set(getBlobUrls(lastPerformanceNote?.params.uploadedSampleUrls ?? {})));
     const nextParams = {
       ...params,
       sampleSource: 'stock' as const,
@@ -371,6 +459,7 @@
       ...nextParams,
       sampleRootNote: getResolvedSampleRootNote(nextParams)
     };
+    syncLastPerformanceNoteParams(params);
   };
 
   const handleGenerate = async () => {
@@ -428,9 +517,7 @@
         class="advanced-mode-panel flex flex-1 flex-col overflow-y-auto border-b border-[#dfdfdd] bg-[#f4f4f2] md:min-h-0 md:grid md:grid-cols-[14rem_minmax(0,1fr)_23rem] md:overflow-hidden lg:grid-cols-[15rem_minmax(0,1fr)_25rem]"
       >
         <AdvancedEngineSidebar
-          {params}
           onChange={handleParamChange}
-          {resolvedEngine}
           selectedEngine={advancedSelectedEngine}
           recipeLabel={getRecipeLabel(recipe)}
         />
@@ -453,10 +540,7 @@
             <AdvancedEnvelopePanel
               {params}
               onChange={handleParamChange}
-              onPatch={(patch) => {
-                const p = { ...params, ...patch };
-                params = p;
-              }}
+              onPatch={handleParamPatch}
             />
           </div>
         </div>
@@ -525,15 +609,8 @@
         </div>
 
         <div id="macro-parameter-panel" class="macro-parameter-panel bg-[#fafafa] p-4 md:min-h-0 md:overflow-y-auto md:border-l md:border-[#dfdfdd] md:p-6">
-          <div class="mb-6">
-            <h2 class="text-[10px] font-bold uppercase tracking-widest text-[#aaa]">Parameters</h2>
-            <p class="mt-2 text-sm text-[#666]">
-              Macro shaping stays on the front panel. Advanced mode opens the raw Tone.js synth controls.
-            </p>
-          </div>
-
           <div>
-            <div class="mb-5 text-[10px] font-bold uppercase tracking-[0.22em] text-[#a5a5a0]">Macro Controls</div>
+            <div class="mb-5 text-[10px] font-bold uppercase tracking-[0.22em] text-[#a5a5a0]">Controls</div>
             <ParameterGrid {params} onChange={handleParamChange} />
           </div>
         </div>
@@ -563,7 +640,37 @@
       <Transport
         onPlay={handlePlay}
         onRandomize={handleRandomize}
-        onExport={() => exportWav(recipe as any, getModeScopedParams())}
+        onExport={handleExport}
+      >
+        {#snippet leftContent()}
+          {#if isAdvancedMode}
+            <div
+              id="advanced-footer-knob-group"
+              class="advanced-footer-knob-group flex items-end gap-3"
+            >
+              <Knob
+                id="footer-pitch-knob"
+                ariaLabel="Pitch tuning"
+                label="Pitch"
+                value={params.pitch}
+                displayValue={formatFrequency(toPitchFrequency(params.pitch))}
+                defaultValue={0.5}
+                size="xs"
+                onChange={(value) => handleParamChange('pitch', value)}
+              />
+              <Knob
+                id="footer-duration-knob"
+                ariaLabel="Master duration"
+                label="Duration"
+                value={params.decay}
+                displayValue={formatSeconds(toTriggerLengthSeconds(params.decay))}
+                defaultValue={0.3}
+                size="xs"
+                onChange={(value) => handleParamChange('decay', value)}
+              />
+            </div>
+          {/if}
+        {/snippet}
       >
         {#snippet centerContent()}
           {#if isAdvancedMode}

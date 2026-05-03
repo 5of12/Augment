@@ -1,5 +1,6 @@
 export type RecipeType = 'tap' | 'click' | 'bloop' | 'chirp' | 'success' | 'error';
 export type SampleSource = 'stock' | 'upload';
+export type NoiseType = 'white' | 'pink' | 'brown';
 export type SynthEngine =
   | 'auto'
   | 'synth'
@@ -8,6 +9,8 @@ export type SynthEngine =
   | 'am'
   | 'poly'
   | 'fat'
+  | 'pluck'
+  | 'noise'
   | 'metal'
   | 'grain'
   | 'sampler'
@@ -37,12 +40,17 @@ export interface AudioParams {
   engine: SynthEngine;
   oscillatorType: SynthOscillatorType;
   modulationType: SynthOscillatorType;
+  noiseType: NoiseType;
+  noisePlaybackRate: number;
   filterType: FilterType;
   filterQ: number;
   attack: number;
   envelopeDecay: number;
   sustain: number;
   release: number;
+  pluckAttackNoise: number;
+  pluckDampening: number;
+  pluckResonance: number;
   sampleSource: SampleSource;
   sampleRootNote: string;
   uploadedSampleUrls: Record<string, string>;
@@ -55,3 +63,19 @@ export interface Variant {
   params: AudioParams;
   description?: string;
 }
+
+export interface RecipeExportRequest {
+  kind: 'recipe';
+  recipe: RecipeType;
+  params: AudioParams;
+}
+
+export interface PerformanceNoteExportRequest {
+  kind: 'performance-note';
+  recipe: RecipeType;
+  params: AudioParams;
+  midi: number;
+  velocity: number;
+}
+
+export type AudioExportRequest = RecipeExportRequest | PerformanceNoteExportRequest;

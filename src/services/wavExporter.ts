@@ -1,6 +1,6 @@
 import * as Tone from 'tone';
-import { buildRecipeGraph, getRenderDuration } from './audioEngine';
-import type { RecipeType, AudioParams } from '../types';
+import { buildPerformanceNoteGraph, buildRecipeGraph, getPerformanceNoteRenderDuration, getRenderDuration } from './audioEngine';
+import type { AudioExportRequest } from '../types';
 
 export const audioBufferToWav = (buffer: AudioBuffer) => {
   const numChannels = buffer.numberOfChannels;
@@ -40,10 +40,31 @@ export const audioBufferToWav = (buffer: AudioBuffer) => {
   return new Blob([view], { type: 'audio/wav' });
 };
 
-export const exportWav = async (recipe: RecipeType, params: AudioParams) => {
+const getExportDuration = (request: AudioExportRequest) =>
+  request.kind === 'performance-note'
+    ? getPerformanceNoteRenderDuration(request.params)
+    : getRenderDuration(request.recipe, request.params);
+
+const formatNoteForFilename = (midi: number) =>
+  Tone.Frequency(midi, 'midi')
+    .toNote()
+    .replace('#', 's')
+    .toLowerCase();
+
+const getExportFilename = (request: AudioExportRequest) =>
+  request.kind === 'performance-note'
+    ? `augment-${request.recipe}-${formatNoteForFilename(request.midi)}.wav`
+    : `augment-${request.recipe}.wav`;
+
+export const exportWav = async (request: AudioExportRequest) => {
   const buffer = await Tone.Offline(async () => {
-    await buildRecipeGraph(recipe, params, 0, true);
-  }, getRenderDuration(recipe, params));
+    if (request.kind === 'performance-note') {
+      await buildPerformanceNoteGraph(request.recipe, request.params, request.midi, request.velocity, 0, true);
+      return;
+    }
+
+    await buildRecipeGraph(request.recipe, request.params, 0, true);
+  }, getExportDuration(request));
   
   const audioBuffer = buffer.get();
   if (!audioBuffer) return;
@@ -52,7 +73,7 @@ export const exportWav = async (recipe: RecipeType, params: AudioParams) => {
   const url = URL.createObjectURL(wavBlob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `augment-${recipe}.wav`;
+  a.download = getExportFilename(request);
   a.click();
   URL.revokeObjectURL(url);
 };
